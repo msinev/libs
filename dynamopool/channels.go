@@ -5,6 +5,7 @@ import (
 "github.com/aws/aws-sdk-go/aws"
 "log"
 "sync"
+	"strconv"
 )
 
 type DynamoGet struct {
@@ -17,6 +18,8 @@ type DynamoGet struct {
 type DynamoSet struct {
 	Table   string
 	Set     map[string]string
+	TTL 		 int64
+	TTLAttribute string
 }
 
 var DynamoSetRequest chan<- *DynamoSet
@@ -37,6 +40,12 @@ func InitDynamoIO(svc *dynamodb.DynamoDB) {
 
 }
 
+func GetOrLesser(s *string, l string) string {
+	if s==nil {
+		return l
+	}
+	return *s
+}
 
 func ProcessGet(inc <-chan *DynamoGet, svc *dynamodb.DynamoDB) {
 	for v:=range inc {
@@ -58,7 +67,7 @@ func ProcessGet(inc <-chan *DynamoGet, svc *dynamodb.DynamoDB) {
 
 		rmap:=v.Result
 		for rk, rv:= range result.Item {
-			rmap[rk]=*rv.S;
+			rmap[rk]=GetOrLesser(rv.S, GetOrLesser(rv.N, "") );
 		}
 		if v.WG!=nil {
 			v.WG.Done();
@@ -71,7 +80,15 @@ func ProcessSet(inc <-chan *DynamoSet, svc *dynamodb.DynamoDB) {
 
 		vmap:=make(map[string]*dynamodb.AttributeValue)
 		for kl,vl := range v.Set {
-			vmap[kl]=&dynamodb.AttributeValue{ S: aws.String(vl) }
+			vmap[kl]=&dynamodb.AttributeValue{
+				S: aws.String(vl),
+			}
+		}
+
+		if v.TTL>0 {
+			vmap[v.TTLAttribute]=&dynamodb.AttributeValue{
+				N: aws.String(strconv.FormatInt(v.TTL, 10)),
+			}
 		}
 
 		result, err := svc.PutItem(&dynamodb.PutItemInput{
